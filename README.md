@@ -1,0 +1,83 @@
+# NeuroBasket
+
+Simulador 2D lateral de basquete com física própria e treinamento evolutivo de IA.
+
+## Requisitos
+- Python 3.12+
+- pygame-ce 2.5.8 (compatível com o import pygame)
+
+## Instalação (Windows / PowerShell)
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m neurobasket.main
+```
+
+O pygame-ce fornece wheels para Python 3.12+ no Windows; o ambiente foi validado com Python 3.14.
+
+## Controles
+- Clique e arraste a partir da bola para mirar.
+- Solte o botão do mouse para arremessar.
+- `R`: reiniciar a tentativa.
+- `ESC`: sair.
+
+## Treinamento da IA
+
+Com o ambiente virtual ativado, execute no terminal do VS Code:
+
+```powershell
+python -m neurobasket.training
+```
+
+O treinamento usa uma população padrão de 50 redes MLP (5 entradas, 8 neurônios
+ocultos e 2 saídas) por 100 gerações. Cada rede escolhe o ângulo e a velocidade
+do arremesso; a física do jogo mede o resultado. A evolução usa seleção,
+cruzamento e mutação, com recompensa gradual para arremessos que se aproximam
+da cesta. Cada rede é avaliada em oito fases fixas do movimento, para comparar
+os indivíduos sob os mesmos desafios e favorecer bots que acertem de forma
+consistente. A IA recebe também a direção e a velocidade da cesta. A cesta se
+move em uma elipse estreita, e as tentativas cobrem todo o ciclo.
+
+Use o botão `Disputar com melhor bot` no painel para pausar o treino e jogar
+contra a melhor rede encontrada até aquela geração. Os turnos alternam um
+arremesso por vez; cestas usam as mesmas recompensas do treinamento, e vence
+quem chegar primeiro a 10 pontos. Ao sair da partida, o treinamento continua.
+
+O painel mostra o melhor arremesso e sobrepõe as trajetórias da população da
+geração atual, junto com métricas de cestas e fitness. Feche a janela ou pressione
+`ESC` para encerrar o treino. Os arquivos `best_brain.json` e
+`training_history.csv` são gravados em uma nova pasta `training_runs/run_.../`,
+preservando os resultados de execuções anteriores. Para ajustar a
+população e o número de gerações:
+
+```powershell
+python -m neurobasket.training --population 20 --generations 10
+```
+
+Para treinar sem abrir a janela, adicione `--headless`.
+Por padrão, o painel mantém cada geração visível por 500 ms; use
+`--generation-delay 1000` para exibir cada uma por 1 segundo.
+
+A direção do arrasto define a direção do lançamento. Quanto maior o arrasto,
+maior a velocidade inicial, limitada para manter a simulação controlável.
+
+## Estrutura
+
+```text
+NeuroBasket/
+├── neurobasket/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── settings.py
+│   ├── physics.py
+│   ├── match.py
+│   ├── simulation.py
+│   ├── training_view.py
+│   └── training.py
+├── requirements.txt
+└── README.md
+```
+
+
