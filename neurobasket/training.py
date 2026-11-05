@@ -21,6 +21,13 @@ DT = 1 / 120
 MAX_STEPS = 600
 EVALUATION_PHASES = 8
 
+# Valores padrão e tetos configuráveis para execuções maiores.
+DEFAULT_GENERATIONS = 100
+DEFAULT_POPULATION = 50
+DEFAULT_GENERATION_DELAY_MS = 500
+MAX_GENERATIONS = 10_000
+MAX_POPULATION = 5_000
+
 
 def new_brain(rng: random.Random) -> dict[str, list]:
     return {
@@ -148,7 +155,12 @@ def tournament(ranked: list[tuple], rng: random.Random):
 
 
 def train(generations: int, population_size: int, output_dir: Path, seed: int | None,
-          visualize: bool = True, generation_delay_ms: int = 500) -> None:
+          visualize: bool = True,
+          generation_delay_ms: int = DEFAULT_GENERATION_DELAY_MS) -> None:
+    if not 1 <= generations <= MAX_GENERATIONS:
+        raise ValueError(f"generations deve estar entre 1 e {MAX_GENERATIONS}")
+    if not 4 <= population_size <= MAX_POPULATION:
+        raise ValueError(f"population_size deve estar entre 4 e {MAX_POPULATION}")
     rng = random.Random(seed)
     population = [new_brain(rng) for _ in range(population_size)]
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -254,18 +266,29 @@ def train(generations: int, population_size: int, output_dir: Path, seed: int | 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Treina a IA do NeuroBasket por evolucao genetica.")
-    parser.add_argument("--generations", type=int, default=100)
-    parser.add_argument("--population", type=int, default=50)
+    parser.add_argument(
+        "--generations", type=int, default=DEFAULT_GENERATIONS,
+        help=f"Geracoes do treino (padrao: {DEFAULT_GENERATIONS}; maximo: {MAX_GENERATIONS}).",
+    )
+    parser.add_argument(
+        "--population", type=int, default=DEFAULT_POPULATION,
+        help=f"Individuos por geracao (padrao: {DEFAULT_POPULATION}; maximo: {MAX_POPULATION}).",
+    )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--seed", type=int, default=None, help="Semente opcional para repetir o treino.")
     parser.add_argument(
-        "--generation-delay", type=int, default=500,
-        help="Tempo em milissegundos para visualizar cada geracao (padrao: 500).",
+        "--generation-delay", type=int, default=DEFAULT_GENERATION_DELAY_MS,
+        help=("Tempo em milissegundos para visualizar cada geracao "
+              f"(padrao: {DEFAULT_GENERATION_DELAY_MS})."),
     )
     parser.add_argument("--headless", action="store_true", help="Treina sem abrir o painel visual.")
     args = parser.parse_args()
-    if args.generations < 1 or args.population < 4 or args.generation_delay < 0:
-        parser.error("use pelo menos 1 geracao, populacao de 4 e atraso nao negativo")
+    if not 1 <= args.generations <= MAX_GENERATIONS:
+        parser.error(f"--generations deve estar entre 1 e {MAX_GENERATIONS}")
+    if not 4 <= args.population <= MAX_POPULATION:
+        parser.error(f"--population deve estar entre 4 e {MAX_POPULATION}")
+    if args.generation_delay < 0:
+        parser.error("--generation-delay deve ser nao negativo")
     output_dir = args.output or Path("training_runs") / datetime.now().strftime("run_%Y%m%d_%H%M%S")
     train(
         args.generations,

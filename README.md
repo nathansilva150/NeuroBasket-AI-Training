@@ -40,6 +40,11 @@ os indivíduos sob os mesmos desafios e favorecer bots que acertem de forma
 consistente. A IA recebe também a direção e a velocidade da cesta. A cesta se
 move em uma elipse estreita, e as tentativas cobrem todo o ciclo.
 
+Os limites configurados são 10.000 gerações e 5.000 indivíduos por geração.
+Você pode aumentá-los editando `MAX_GENERATIONS` e `MAX_POPULATION` no início
+de `neurobasket/training.py`. Os valores padrão também ficam ali como
+`DEFAULT_GENERATIONS`, `DEFAULT_POPULATION` e `DEFAULT_GENERATION_DELAY_MS`.
+
 Use o botão `Disputar com melhor bot` no painel para pausar o treino e jogar
 contra a melhor rede encontrada até aquela geração. Os turnos alternam um
 arremesso por vez; cestas usam as mesmas recompensas do treinamento, e vence
@@ -56,8 +61,17 @@ população e o número de gerações:
 python -m neurobasket.training --population 20 --generations 10
 ```
 
-Para treinar sem abrir a janela, adicione `--headless`.
-Por padrão, o painel mantém cada geração visível por 500 ms; use
+Para escolher os parâmetros na linha de comando, passe `--generations` e
+`--population`. Por exemplo, para usar 1.000 gerações com 500 indivíduos por
+geração:
+
+```powershell
+python -m neurobasket.training --generations 1000 --population 500 --generation-delay 1000
+```
+
+O treino realiza oito avaliações por indivíduo em cada geração, então valores
+maiores aumentam bastante o tempo de execução. Para treinar sem abrir a janela,
+adicione `--headless`. Por padrão, o painel mantém cada geração visível por 500 ms; use
 `--generation-delay 1000` para exibir cada uma por 1 segundo.
 
 A direção do arrasto define a direção do lançamento. Quanto maior o arrasto,
