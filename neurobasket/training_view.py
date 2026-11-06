@@ -12,6 +12,7 @@ class TrainingView:
         pygame.init()
         self.width = 1280
         self.height = 820
+        self.fullscreen = False
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption("NeuroBasket | Painel de treinamento")
         self.clock = pygame.time.Clock()
@@ -79,12 +80,16 @@ class TrainingView:
         trace_layer = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         for entry in ranked:
             reward, path = entry[9], entry[5]
-            if reward == 3:
-                color = (85, 245, 155, 95)
+            if entry[10] > 0:
+                color = (85, 245, 155, 110)
+            elif reward >= 5:
+                color = (255, 175, 75, 120)
             elif reward == 2:
                 color = (85, 175, 255, 105)
             elif reward == 1:
                 color = (255, 205, 85, 105)
+            elif reward == 3:
+                color = (190, 120, 255, 100)
             else:
                 color = (255, 105, 100, 48)
             self._draw_trace(trace_layer, path, rect, color, 1)
@@ -93,12 +98,18 @@ class TrainingView:
     def update(self, generation: int, generations: int, ranked: list[tuple],
                average_fitness: float, population_size: int,
                generation_delay_ms: int = 500,
-               evaluation_phases: int = 8) -> bool:
+               evaluation_phases: int = 8,
+               record_fitness: float | None = None,
+               record_generation: int = 0) -> bool:
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (
                 event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE, pygame.K_q)
             ):
                 self.running = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                self.fullscreen = not self.fullscreen
+                flags = pygame.FULLSCREEN if self.fullscreen else 0
+                self.screen = pygame.display.set_mode((self.width, self.height), flags)
             elif (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
                   and self.match_button.collidepoint(event.pos)):
                 self.match_requested = True
@@ -107,10 +118,11 @@ class TrainingView:
 
         best = ranked[0]
         baskets = sum(entry[7] for entry in ranked)
-        counts = {1: 0, 2: 0, 3: 0}
+        counts = {1: 0, 2: 0, 3: 0, "multi": 0}
         for entry in ranked:
-            for reward, count in zip((1, 2, 3), entry[8]):
+            for reward, count in zip((1, 2, 3, "multi"), entry[8]):
                 counts[reward] += count
+        clean_baskets_population = sum(entry[10] for entry in ranked)
 
         self.screen.fill(self.background)
         self._text("NEUROBASKET | PAINEL DE TREINAMENTO", 24, 18,
@@ -148,16 +160,21 @@ class TrainingView:
         attempts = population_size * evaluation_phases
         self._text(f"Individuos: {population_size}    Cestas: {baskets}/{attempts} arremessos",
                    794, 477, (225, 233, 244))
-        self._text(f"Fitness melhor: {best[0]:.2f}    Fitness medio: {average_fitness:.2f}",
+        self._text(f"Melhor geracao: {best[0]:.2f}    Media: {average_fitness:.2f}",
                    794, 502, (225, 233, 244))
-        self._text(f"Recompensas: aro +1 ({counts[1]})   tabela +2 ({counts[2]})", 794, 527)
-        self._text(f"Sem toque +3 ({counts[3]})", 794, 552)
-        self._text(f"Melhor rede: {best[2]} pontos em {evaluation_phases} fases", 794, 583,
+        if record_fitness is not None:
+            self._text(f"Recorde historico: {record_fitness:.2f} (geracao {record_generation})",
+                       794, 527, (105, 255, 170))
+        self._text(f"Aro +1 ({counts[1]})   Tabela +2 ({counts[2]})", 794, 552)
+        self._text(f"Limpa +3 ({clean_baskets_population})   Aro 2x +3 "
+                   f"({counts[3] - clean_baskets_population})", 794, 577)
+        self._text(f"Aro 3+ quicadas +5 ou mais ({counts['multi']})", 794, 602)
+        self._text(f"Cestas limpas do melhor: {best[10]}/{evaluation_phases}", 794, 627,
                    (105, 255, 170))
         self._text(f"Lance mostrado: {best[3]:.1f} graus | {best[4]:.0f} px/s",
-                   794, 607, (225, 233, 244))
-        self._text("Verde: +3    Azul: +2    Amarelo: +1    Vermelho: sem cesta",
-                   794, 638, (175, 190, 210), self.small_font)
+                   794, 651, (225, 233, 244))
+        self._text("Verde: limpa  |  Azul: tabela  |  Amarelo/roxo: aro  |  Laranja: multi",
+                   794, 678, (175, 190, 210), self.small_font)
         self._text("A rede escolhe angulo e velocidade; a populacao evolui a cada geracao.",
                    38, 666, (175, 190, 210), self.small_font)
         self._text("Amostra visual da trajetoria completa do melhor individuo:",

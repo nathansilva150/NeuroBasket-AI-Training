@@ -16,10 +16,12 @@ from .training_view import TrainingView
 
 INPUTS = 5
 HIDDEN = 8
-OUTPUTS = 2
+OUTPUTS = 3
 DT = 1 / 120
 MAX_STEPS = 600
-EVALUATION_PHASES = 8
+EVALUATION_PHASES = 16
+IMMIGRANT_FRACTION = 0.02
+STAGNATION_WINDOW = 12
 
 # Valores padrão e tetos configuráveis para execuções maiores.
 DEFAULT_GENERATIONS = 100
@@ -43,9 +45,10 @@ def brain_output(brain: dict[str, list], inputs: list[float]) -> list[float]:
         math.tanh(brain["b1"][j] + sum(inputs[i] * brain["w1"][i][j] for i in range(INPUTS)))
         for j in range(HIDDEN)
     ]
+    output_count = len(brain["b2"])
     return [
         math.tanh(brain["b2"][k] + sum(hidden[j] * brain["w2"][j][k] for j in range(HIDDEN)))
-        for k in range(OUTPUTS)
+        for k in range(output_count)
     ]
 
 
@@ -65,11 +68,14 @@ def shot_inputs(hoop_x: float | None = None, hoop_y: float | None = None,
 
 def evaluate_one(brain: dict[str, list], start_time: float) -> tuple:
     initial_hoop_x, initial_hoop_y = cfg.hoop_position(start_time)
-    angle_output, speed_output = brain_output(
+    outputs = brain_output(
         brain, shot_inputs(initial_hoop_x, initial_hoop_y, start_time)
     )
+    angle_output, speed_output = outputs[:2]
+    boost_output = outputs[2] if len(outputs) > 2 else -1.0
     angle_degrees = 45 + angle_output * 35
-    speed = 800 + speed_output * 500
+    boost = max(0.0, boost_output) * cfg.MAX_POWER_BOOST
+    speed = 800 + speed_output * 500 + boost
     angle = math.radians(angle_degrees)
 
     ball = Ball()
@@ -91,16 +97,25 @@ def evaluate_one(brain: dict[str, list], start_time: float) -> tuple:
             math.hypot(ball.x - ball.hoop_x, ball.y - ball.hoop_y),
         )
         if ball.scored:
-            return (100 + ball.score_value, ball.score_value, angle_degrees, speed,
-                    trajectory, hoop_trajectory)
+            clean_basket = not ball.rim_touched and not ball.backboard_touched
+            # Escala proporcional por qualidade: 1 ponto = 34, tabela = 68,
+            # cesta limpa = 103. Quicadas extras nao aumentam a recompensa.
+            if clean_basket:
+                fitness = 103
+            elif ball.rim_touched:
+                fitness = 34
+            else:
+                fitness = 68
+            return (fitness, ball.score_value, angle_degrees, speed,
+                    trajectory, hoop_trajectory, clean_basket)
         if ball.x > cfg.SCREEN_WIDTH + cfg.BALL_RADIUS or (
             ball.y > cfg.FLOOR_Y + cfg.BALL_RADIUS and ball.vy > 0
         ):
             break
 
-    # Recompensa gradual: aproximações ao aro já ajudam a seleção a evoluir.
+    # Aproximacoes ajudam a busca, mas ficam abaixo de uma cesta limpa.
     fitness = 20 / (1 + closest_distance / 100)
-    return fitness, 0, angle_degrees, speed, trajectory, hoop_trajectory
+    return fitness, 0, angle_degrees, speed, trajectory, hoop_trajectory, False
 
 
 def evaluate(brain: dict[str, list], start_times: list[float]) -> tuple:
@@ -108,8 +123,17 @@ def evaluate(brain: dict[str, list], start_times: list[float]) -> tuple:
     average_fitness = sum(outcome[0] for outcome in outcomes) / len(outcomes)
     total_reward = sum(outcome[1] for outcome in outcomes)
     basket_count = sum(outcome[1] > 0 for outcome in outcomes)
-    reward_counts = tuple(sum(outcome[1] == value for outcome in outcomes) for value in (1, 2, 3))
-    representative = max(outcomes, key=lambda outcome: (outcome[1], outcome[0]))
+    clean_basket_count = sum(outcome[6] for outcome in outcomes)
+    reward_counts = (
+        sum(outcome[1] == 1 for outcome in outcomes),
+        sum(outcome[1] == 2 for outcome in outcomes),
+        sum(outcome[1] == 3 for outcome in outcomes),
+        sum(outcome[1] >= 4 for outcome in outcomes),
+    )
+    representative = max(
+        outcomes,
+        key=lambda outcome: (outcome[0], outcome[6], -outcome[1]),
+    )
     return (
         average_fitness,
         total_reward,
@@ -118,21 +142,23 @@ def evaluate(brain: dict[str, list], start_times: list[float]) -> tuple:
         representative[4],
         representative[5],
         basket_count,
+        clean_basket_count,
         reward_counts,
         representative[1],
     )
 
 
-def mutate(brain: dict[str, list], rng: random.Random, rate: float = 0.12) -> None:
+def mutate(brain: dict[str, list], rng: random.Random, rate: float = 0.12,
+           sigma: float = 0.25) -> None:
     for matrix in (brain["w1"], brain["w2"]):
         for row in matrix:
             for index in range(len(row)):
                 if rng.random() < rate:
-                    row[index] += rng.gauss(0, 0.25)
+                    row[index] += rng.gauss(0, sigma)
     for vector in (brain["b1"], brain["b2"]):
         for index in range(len(vector)):
             if rng.random() < rate:
-                vector[index] += rng.gauss(0, 0.25)
+                vector[index] += rng.gauss(0, sigma)
 
 
 def crossover(first: dict[str, list], second: dict[str, list], rng: random.Random) -> dict[str, list]:
@@ -151,7 +177,7 @@ def crossover(first: dict[str, list], second: dict[str, list], rng: random.Rando
 
 def tournament(ranked: list[tuple], rng: random.Random):
     candidates = rng.sample(ranked[: max(2, len(ranked) // 2)], k=3)
-    return max(candidates, key=lambda entry: entry[0])[1]
+    return max(candidates, key=lambda entry: (entry[0], entry[10]))[1]
 
 
 def train(generations: int, population_size: int, output_dir: Path, seed: int | None,
@@ -166,17 +192,18 @@ def train(generations: int, population_size: int, output_dir: Path, seed: int | 
     output_dir.mkdir(parents=True, exist_ok=True)
     history_path = output_dir / "training_history.csv"
     best_path = output_dir / "best_brain.json"
-    global_best_key = (-float("inf"), -1, -1)
+    global_best_key = (-float("inf"), -1)
     global_best_brain = None
     global_best_generation = 0
-    elite_count = max(2, population_size // 20)
+    elite_count = max(2, population_size // 10)
+    best_fitness_history: list[float] = []
     view = TrainingView() if visualize else None
 
     with history_path.open("w", newline="", encoding="utf-8") as history_file:
         writer = csv.writer(history_file)
         writer.writerow((
             "generation", "best_fitness", "average_fitness", "baskets",
-            "attempts", "best_total_reward",
+            "attempts", "best_total_reward", "best_clean_baskets",
         ))
 
         for generation in range(1, generations + 1):
@@ -188,23 +215,26 @@ def train(generations: int, population_size: int, output_dir: Path, seed: int | 
             ]
             for brain in population:
                 (fitness, total_reward, angle, speed, trajectory, hoop_trajectory,
-                 basket_count, reward_counts, representative_reward) = evaluate(brain, start_times)
+                 basket_count, clean_basket_count, reward_counts,
+                 representative_reward) = evaluate(brain, start_times)
                 baskets += basket_count
                 ranked.append((
                     fitness, brain, total_reward, angle, speed, trajectory,
                     hoop_trajectory, basket_count, reward_counts, representative_reward,
+                    clean_basket_count,
                 ))
-            ranked.sort(key=lambda entry: (entry[0], entry[7], entry[2]), reverse=True)
+            ranked.sort(key=lambda entry: (entry[0], entry[10]), reverse=True)
 
             best = ranked[0]
+            best_fitness_history.append(best[0])
             average = sum(entry[0] for entry in ranked) / population_size
             attempt_count = population_size * EVALUATION_PHASES
             writer.writerow((
                 generation, f"{best[0]:.4f}", f"{average:.4f}", baskets,
-                attempt_count, best[2],
+                attempt_count, best[2], best[10],
             ))
             history_file.flush()
-            best_key = (best[0], best[7], best[2])
+            best_key = (best[0], best[10])
             if best_key > global_best_key:
                 global_best_key = best_key
                 global_best_brain = best[1]
@@ -217,6 +247,7 @@ def train(generations: int, population_size: int, output_dir: Path, seed: int | 
                             "fitness": best[0],
                             "reward": best[2],
                             "baskets": best[7],
+                            "clean_baskets": best[10],
                             "evaluation_phases": EVALUATION_PHASES,
                             "angle_degrees": best[3],
                             "speed": best[4],
@@ -230,13 +261,15 @@ def train(generations: int, population_size: int, output_dir: Path, seed: int | 
             print(
                 f"Geracao {generation:>4}/{generations} | "
                 f"melhor fitness: {best[0]:7.2f} | cestas: {baskets:>3}/{attempt_count} | "
-                f"recompensa melhor: {best[2]:>2} | angulo: {best[3]:.1f} graus | "
+                f"cestas limpas melhor: {best[10]:>2}/{EVALUATION_PHASES} | "
+                f"angulo: {best[3]:.1f} graus | "
                 f"velocidade: {best[4]:.0f}"
             )
 
             if view and not view.update(
                 generation, generations, ranked, average, population_size,
                 generation_delay_ms, EVALUATION_PHASES,
+                global_best_key[0], global_best_generation,
             ):
                 break
             if view and view.consume_match_request():
@@ -251,10 +284,20 @@ def train(generations: int, population_size: int, output_dir: Path, seed: int | 
                 view = TrainingView()
 
             next_population = [entry[1] for entry in ranked[:elite_count]]
-            while len(next_population) < population_size:
+            # Injeta redes novas para recuperar diversidade quando a populacao
+            # converge cedo para uma solucao apenas razoavel.
+            immigrant_count = max(1, int(population_size * IMMIGRANT_FRACTION))
+            immigrant_count = min(immigrant_count, population_size - elite_count)
+            target_size = population_size - immigrant_count
+            recent = best_fitness_history[-STAGNATION_WINDOW:]
+            stagnant = len(recent) == STAGNATION_WINDOW and max(recent) - min(recent) < 0.05
+            mutation_rate = 0.10 if not stagnant else 0.18
+            mutation_sigma = 0.20 if not stagnant else 0.32
+            while len(next_population) < target_size:
                 child = crossover(tournament(ranked, rng), tournament(ranked, rng), rng)
-                mutate(child, rng)
+                mutate(child, rng, mutation_rate, mutation_sigma)
                 next_population.append(child)
+            next_population.extend(new_brain(rng) for _ in range(immigrant_count))
             population = next_population
 
     if view:

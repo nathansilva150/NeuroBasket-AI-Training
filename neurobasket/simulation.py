@@ -10,6 +10,7 @@ class Simulation:
     def __init__(self) -> None:
         pygame.init()
         pygame.display.set_caption(cfg.TITLE)
+        self.fullscreen = False
         self.screen = pygame.display.set_mode((cfg.SCREEN_WIDTH, cfg.SCREEN_HEIGHT))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 20)
@@ -20,6 +21,8 @@ class Simulation:
         self.elapsed = 0.0
         self.reward_total = 0
         self.score_counted = False
+        self.shift_held = False
+        self.power_charge = 0.0
         self.running = True
 
     def run(self) -> None:
@@ -27,6 +30,10 @@ class Simulation:
             dt = min(self.clock.tick(cfg.FPS) / 1000.0, 1 / 30)
             self.elapsed += dt
             self._handle_events()
+            if self.shift_held and not self.ball.active:
+                self.power_charge = min(
+                    cfg.POWER_CHARGE_SECONDS, self.power_charge + dt
+                )
             self.ball.update(dt, self.elapsed)
             if self.ball.scored and not self.score_counted:
                 self.reward_total += self.ball.score_value
@@ -38,15 +45,21 @@ class Simulation:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
-
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
+                elif event.key == pygame.K_F11:
+                    self.toggle_fullscreen()
                 elif event.key == pygame.K_r:
                     self.ball.reset()
                     self.dragging = False
                     self.score_counted = False
-
+                    self.shift_held = False
+                    self.power_charge = 0.0
+                elif event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
+                    self.shift_held = True
+            elif event.type == pygame.KEYUP and event.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
+                self.shift_held = False
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if not self.ball.active:
                     mx, my = event.pos
@@ -60,8 +73,20 @@ class Simulation:
 
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 if self.dragging:
-                    self.ball.launch(*event.pos)
+                    boost = (
+                        cfg.MAX_POWER_BOOST
+                        * self.power_charge / cfg.POWER_CHARGE_SECONDS
+                    )
+                    self.ball.launch(*event.pos, boost=boost)
                     self.dragging = False
+                    self.power_charge = 0.0
+
+    def toggle_fullscreen(self) -> None:
+        self.fullscreen = not self.fullscreen
+        flags = pygame.FULLSCREEN if self.fullscreen else 0
+        self.screen = pygame.display.set_mode(
+            (cfg.SCREEN_WIDTH, cfg.SCREEN_HEIGHT), flags
+        )
 
     def _draw_court(self, hoop_x: float | None = None, hoop_y: float | None = None) -> None:
         self.screen.fill((21, 27, 38))
@@ -138,12 +163,14 @@ class Simulation:
 
         instructions = [
             "Clique na bola, arraste na direcao desejada e solte para arremessar.",
-            "R: reiniciar tentativa    ESC: sair",
-            "Recompensa: aro +1    tabela +2    sem toque +3",
+            "SHIFT: forca extra (3s)  |  F11: tela cheia  |  R: reiniciar  |  ESC: sair",
+            "Aro: 1, 3, 5...    tabela +2    sem toque +3",
         ]
         for index, line in enumerate(instructions):
             text = self.small_font.render(line, True, (170, 184, 204))
             self.screen.blit(text, (24, 55 + index * 23))
+
+        self.draw_power_bar(self.power_charge)
 
         if self.ball.scored:
             message = self.font.render(
@@ -157,3 +184,19 @@ class Simulation:
             self.screen.blit(message, (24, 115))
 
         pygame.display.flip()
+
+    def draw_power_bar(self, charge: float, y: int = 143) -> None:
+        bar_x, bar_y, bar_width, bar_height = 24, y, 240, 14
+        fraction = max(0.0, min(1.0, charge / cfg.POWER_CHARGE_SECONDS))
+        pygame.draw.rect(self.screen, (52, 62, 78),
+                         (bar_x, bar_y, bar_width, bar_height), border_radius=5)
+        if fraction:
+            color = (95, 220, 150) if fraction < 1 else (255, 195, 85)
+            pygame.draw.rect(self.screen, color,
+                             (bar_x, bar_y, round(bar_width * fraction), bar_height),
+                             border_radius=5)
+        label = self.small_font.render(
+            f"FORCA EXTRA (SHIFT): {round(fraction * 100)}%",
+            True, (190, 205, 225),
+        )
+        self.screen.blit(label, (bar_x, bar_y + 19))

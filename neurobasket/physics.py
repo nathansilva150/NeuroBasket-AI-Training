@@ -19,6 +19,7 @@ class Ball:
         self.active = False
         self.scored = False
         self.rim_touched = False
+        self.rim_hits = 0
         self.backboard_touched = False
         self.score_value = 0
         self.last_score_time = 0.0
@@ -30,11 +31,12 @@ class Ball:
         self.backboard_top = self.hoop_y + (cfg.BACKBOARD_TOP - cfg.HOOP_Y)
         self.backboard_bottom = self.hoop_y + (cfg.BACKBOARD_BOTTOM - cfg.HOOP_Y)
 
-    def launch(self, target_x: float, target_y: float) -> None:
+    def launch(self, target_x: float, target_y: float, boost: float = 0.0) -> None:
         dx = target_x - self.x
         dy = target_y - self.y
         speed = math.hypot(dx, dy) * cfg.LAUNCH_SPEED_PER_PIXEL
         speed = min(speed, cfg.MAX_LAUNCH_SPEED)
+        speed += max(0.0, min(boost, cfg.MAX_POWER_BOOST))
 
         if speed < 30:
             return
@@ -83,7 +85,7 @@ class Ball:
             if abs(crossing_relative_x) < opening_half_width:
                 self.scored = True
                 if self.rim_touched:
-                    self.score_value = 1
+                    self.score_value = max(1, 2 * self.rim_hits - 1)
                 elif self.backboard_touched:
                     self.score_value = 2
                 else:
@@ -118,6 +120,7 @@ class Ball:
 
             velocity_along_normal = self.vx * nx + self.vy * ny
             if velocity_along_normal < 0:
+                self.rim_hits += 1
                 impulse = (1 + restitution) * velocity_along_normal
                 self.vx -= impulse * nx
                 self.vy -= impulse * ny
